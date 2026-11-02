@@ -1,5 +1,6 @@
 # services/ikuuu_service.py
 import json
+import hashlib
 import os
 from typing import Any, Dict, List
 
@@ -36,7 +37,7 @@ class IkuuuService(CheckinService):
 
         configs: List[Dict[str, Any]] = []
         for cookie in cookies:
-            account_id = cookie[:10] + "..."
+            account_id = hashlib.sha256(cookie.encode("utf-8")).hexdigest()[:12]
             configs.append(
                 {
                     "cookie": cookie,
@@ -101,7 +102,10 @@ class IkuuuService(CheckinService):
             "origin": account_config["base_url"],
         }
 
-        response = self.make_request("POST", checkin_url, headers=headers)
+        response = self.make_request("POST", checkin_url, headers=headers, allow_redirects=False)
+
+        if 300 <= response.status_code < 400:
+            raise ValueError("签到请求被重定向，Cookie 可能已失效或域名已变更")
 
         if response.history:
             redirect_chain = " -> ".join(f"{r.status_code}({r.url})" for r in response.history)
@@ -110,10 +114,8 @@ class IkuuuService(CheckinService):
 
         content_type = response.headers.get("Content-Type", "")
         if "application/json" not in content_type:
-            body_preview = response.text[:300].replace("\n", " ").strip()
             print(f"      [诊断] 响应状态码: {response.status_code}")
             print(f"      [诊断] Content-Type: {content_type}")
-            print(f"      [诊断] 响应内容前300字符: {body_preview}")
 
         checkin_data = self._parse_checkin_json(response, content_type)
 

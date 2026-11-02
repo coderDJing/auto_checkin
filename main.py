@@ -1,6 +1,7 @@
 # main.py
 import hashlib
 import os
+import sys
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Type
 
@@ -270,7 +271,7 @@ def main() -> None:
 
     if not services:
         print("没有任何服务被启用，程序退出。")
-        return
+        sys.exit(1)
 
     if all_configured_accounts_succeeded(services, prior_status):
         print("\n=== 所有已配置的账号今日均已成功签到，无需重复执行。 ===")
@@ -280,6 +281,8 @@ def main() -> None:
     all_results = run_services(services, prior_status)
     save_and_notify(all_results)
     print("\n所有任务执行完毕。")
+    if not all_results or any(not result.success for result in all_results):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

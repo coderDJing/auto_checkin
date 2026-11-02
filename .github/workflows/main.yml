@@ -1,124 +1,27 @@
-name: "Auto-Checkin(glados/ikuuu/workbuddy)"
+name: iKuuu daily check-in
 
 on:
-  schedule:    
-    # 实际运行时间为 17:10 和 23:10 (UTC) / 1:10 和 07:10 (UTC+8) 
-    - cron: "10 17,23 * * *"
+  schedule:
+    - cron: '0 22 * * *' # 06:00 Beijing time
   workflow_dispatch:
 
-env:
-  RUN_ENV: 'prod'
-  WORKFLOW_FILE_NAME: 'main.yml' # 和action yml名字保持一致
+permissions:
+  contents: read
 
 jobs:
-  build:
+  checkin:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 5
     steps:
-      - name: Checkout master
-        uses: actions/checkout@v4
-
-      - name: Set up python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          # 设置运行脚本的 Python 版本，建议使用稳定版本
-          python-version: '3.8'
-          # 增加缓存，加快速度
-          cache: 'pip'
-
-      - name: Set current date (Beijing)
-        id: date
-        run: echo "BEIJING_TODAY=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')" >> $GITHUB_ENV
-
-      - name: Set token existence
-        # secrets 上下文只能在表达式中使用，而不能直接在条件语句中使用，需要做一次转换
-        run: |
-          if [[ -n "${{ secrets.GH_ACCESS_TOKEN }}" ]]; then
-            echo "HAS_TOKEN=true" >> $GITHUB_ENV
-          else
-            echo "HAS_TOKEN=false" >> $GITHUB_ENV
-          fi
-
-      - name: Random sleep
-        if: github.event_name == 'schedule'
-        run: sleep $(shuf -i 10-50 -n 1)
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Download previous checkin status
-        if: ${{ env.HAS_TOKEN == 'true' }}
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Check in
         env:
-          # 这里把GH_TOKEN传入，主要是给gh使用
-          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
-        run: |
-          # 获取最近一次成功的、非本次运行的工作流信息
-          PREVIOUS_RUN_INFO=$(gh run list --workflow="${{ env.WORKFLOW_FILE_NAME }}" --status=success --json databaseId,createdAt --limit=5 \
-            | jq --argjson current_run_id "${{ github.run_id }}" \
-            '[.[] | select(.databaseId != $current_run_id)][0]')
-          
-          PREVIOUS_RUN_ID=$(echo "$PREVIOUS_RUN_INFO" | jq '.databaseId')
-          PREVIOUS_RUN_CREATED_AT=$(echo "$PREVIOUS_RUN_INFO" | jq -r '.createdAt')
-
-          if [[ -z "$PREVIOUS_RUN_ID" || "$PREVIOUS_RUN_ID" == "null" ]]; then
-            echo "No previous successful run found. Proceeding normally."
-          else
-            LAST_RUN_BEIJING_DATE=$(TZ='Asia/Shanghai' date -d "$PREVIOUS_RUN_CREATED_AT" +'%Y-%m-%d')
-            echo "Found previous successful run: ID $PREVIOUS_RUN_ID at $PREVIOUS_RUN_CREATED_AT (UTC)"
-            echo "Previous run's date (Beijing Time): $LAST_RUN_BEIJING_DATE"
-
-            if [[ "${{ env.BEIJING_TODAY }}" == "$LAST_RUN_BEIJING_DATE" ]]; then
-              echo "Previous run was on the same day (Beijing Time). Attempting to download artifact."
-              ARTIFACT_NAME="checkin-status-$LAST_RUN_BEIJING_DATE"
-              echo "Attempting to download artifact: $ARTIFACT_NAME"
-              
-              gh run download "$PREVIOUS_RUN_ID" -n "$ARTIFACT_NAME" -p . || echo "Artifact download failed or artifact does not exist. Continuing."
-
-              # 定义 artifact 解压后的文件路径
-              ARTIFACT_FILE_PATH="$ARTIFACT_NAME/status.json"
-              
-              # 检查文件是否存在于子目录中，如果存在则移动到当前目录
-              if [[ -f "$ARTIFACT_FILE_PATH" ]]; then
-                echo "Artifact downloaded. Moving status.json to current directory."
-                mv "$ARTIFACT_FILE_PATH" .
-              else
-                echo "status.json not found within the downloaded artifact directory. Continuing."
-              fi
-            else
-              echo "Previous run was on a different day (Beijing Time). Proceeding with a fresh check-in."
-            fi
-          fi
-        continue-on-error: true # 如果不存在，依然继续
-      
-      # - name: Debug file structure after download
-      #   run: ls -R
-
-      - name: Run Checkin
-        env:
-          # 需要添加Action Secrets
-          # 添加Action Secrets的路径如下：Settings -> Security -> Secrets and variables -> Actions -> New repository secrets
-          # glados配置，用||隔开
-          GR_COOKIE: ${{ secrets.GR_COOKIE }}
-          GLADOS_BASE_URL: ${{ secrets.GLADOS_BASE_URL }}
-          # ikuuu配置，用||隔开
+          RUN_ENV: prod
+          IKUUU_BASE_URL: https://ikuuu.top
           IKUUU_COOKIE: ${{ secrets.IKUUU_COOKIE }}
-          IKUUU_BASE_URL: ${{ secrets.IKUUU_BASE_URL }}
-          # WorkBuddy 配置，由本机工具提取并写入单个 JSON Secret
-          WORKBUDDY_ACCOUNTS_JSON: ${{ secrets.WORKBUDDY_ACCOUNTS_JSON }}
-          # 通知配置
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }} # telgram推送，选填
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }} # telgram推送，选填
-          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }} # serverchan推送，选填
-          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }} # pushplus推送，选填
-        run: |
-          python3 ./main.py
-
-      - name: Upload current checkin status
-        uses: actions/upload-artifact@v4
-        if: ${{ env.HAS_TOKEN == 'true' }}
-        with:
-          name: checkin-status-${{ env.BEIJING_TODAY }}
-          path: status.json
-          retention-days: 1
+        run: python main.py
